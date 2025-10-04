@@ -39,7 +39,7 @@ python collect_data.py --heme_limit 300 --non_heme_limit 300
 python extract_embeddings.py --batch_size 4
 
 # Step 3: Train model (takes ~15 min)
-python train_model.py --epochs 30
+python train.py --epochs 30
 
 # Step 4: Make predictions
 python predict.py --sequence "MKALIVLGLVLLSAALCGQAKDAENGAESAQVKGHGKKVVDALANAVAHVDDMPNALSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTPAVHASLDKFLASVSTVLTSKYR"
