@@ -24,8 +24,7 @@ python -m venv heme_env
 source heme_env/bin/activate  # On Windows: heme_env\Scripts\activate
 
 # Install packages
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install fair-esm requests scikit-learn matplotlib tqdm
+pip install -r requirements.txt
 ```
 
 ## 🚀 Quick Start
