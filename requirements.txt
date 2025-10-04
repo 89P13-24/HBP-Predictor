@@ -1,0 +1,9 @@
+torch 
+torchvision 
+torchaudio 
+fair-esm 
+requests 
+scikit-learn 
+matplotlib 
+tqdm
+Bio
