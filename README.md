@@ -32,7 +32,7 @@ pip install -r requirements.txt
 ### Option 1: Quick Test (300+300 proteins, ~1 hour)
 ```bash
 # Step 1: Collect data
-python collect_data.py --heme_limit 300 --non_heme_limit 300
+python collect_data.py --max_sequences 300 --max_length 500
 
 # Step 2: Extract embeddings (takes ~20 min)
 python extract_embeddings.py --batch_size 4
@@ -47,7 +47,7 @@ python predict.py --sequence "MKALIVLGLVLLSAALCGQAKDAENGAESAQVKGHGKKVVDALANAVAHV
 ### Option 2: Production Run (full dataset, 3-4 hours)
 ```bash
 # Step 1: Collect all available data
-python collect_data.py --heme_limit -1 --non_heme_limit 5000
+python collect_data.py --max_sequences 10000 --max_length 2000
 
 # Step 2: Extract embeddings (takes ~2 hours)
 python extract_embeddings.py --model esm2_t33_650M_UR50D --batch_size 4
@@ -65,8 +65,8 @@ python predict.py --fasta my_proteins.fasta --output results.csv
 Fetches protein sequences from UniProt database.
 
 **Arguments:**
-- `--heme_limit`: Number of heme-binding proteins (-1 for all)
-- `--non_heme_limit`: Number of non-heme-binding proteins
+- `--max_sequences`: Number of heme-binding proteins 
+- `--max_length`: Maximum length of single protein sequence
 - `--output`: Output file prefix
 
 **Output:**
@@ -75,7 +75,7 @@ Fetches protein sequences from UniProt database.
 
 **Example:**
 ```bash
-python collect_data.py --heme_limit 1000 --non_heme_limit 1000
+python collect_data.py --max_sequences 1000 --max_length 1000
 ```
 
 ### Step 2: Embedding Extraction (`extract_embeddings.py`)
@@ -188,11 +188,6 @@ python train_model.py --batch_size 16
 python train_model.py --hidden_dim 256
 ```
 
-### Slow Data Collection
-UniProt API can be slow. If it times out:
-```bash
-# Collect smaller batches
-python collect_data.py --heme_limit 500 --non_heme_limit 500
 
 # Run multiple times and combine data manually
 ```
