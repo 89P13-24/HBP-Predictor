@@ -57,7 +57,6 @@ class AttentionHemeClassifier(nn.Module):
             batch_first=True
         )
 
-        # ✅ Learnable pooling layer (attention-based)
         self.attn_pool = nn.Linear(input_dim, 1)
 
         self.ffn = nn.Sequential(
