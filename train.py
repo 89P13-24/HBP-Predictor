@@ -79,12 +79,12 @@ class AttentionHemeClassifier(nn.Module):
         attn_out, _ = self.attention(x, x, x, key_padding_mask=~mask)
         x = self.ln1(x + attn_out)
 
-        # ✅ Compute per-residue attention scores
+        # Compute per-residue attention scores
         attn_scores = self.attn_pool(x).squeeze(-1)  # [B, L]
         attn_scores[~mask] = float('-inf')  # mask padding residues
         attn_weights = torch.softmax(attn_scores, dim=1)  # [B, L]
 
-        # ✅ Weighted mean pooling
+        # Weighted mean pooling
         pooled = torch.sum(attn_weights.unsqueeze(-1) * x, dim=1)  # [B, D]
 
         x = self.ffn(pooled)
@@ -168,7 +168,12 @@ class HemeTrainer:
 # Main
 # -----------------------
 def main(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print("Using device:", device)
 
     data = torch.load(args.data_path)
@@ -199,7 +204,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     trainer = HemeTrainer(model, optimizer, criterion, device, patience=args.patience)
-    trainer.train(train_loader, val_loader, args.epochs)
+    # trainer.train(train_loader, val_loader, args.epochs)
     trainer.model.load_state_dict(torch.load("best_attention_model.pt"))
     trainer.test(test_loader)
 

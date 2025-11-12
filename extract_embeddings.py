@@ -1,24 +1,8 @@
 """
-Script 2: Extract ESM-2 Embeddings (Full Token-Level Matrices)
-==============================================================
-
 Extracts full per-residue embeddings from pre-trained ESM-2 models.
 
-Installation:
-    pip install fair-esm torch tqdm biopython pandas
-
-Usage:
-    # Default (650M model, batch_size=4)
-    python extract_embeddings.py
-
-    # Faster smaller model
-    python extract_embeddings.py --model esm2_t12_35M_UR50D --batch_size 16
-
-    # Highest quality (requires 16GB+ GPU)
-    python extract_embeddings.py --model esm2_t36_3B_UR50D --batch_size 2
-
 Input:
-    - heme_dataset_uniprot.csv (from Script 1)
+    - heme_dataset_uniprot.csv (from collect_data.py)
       Columns required: ["protein_id", "sequence", "label"]
 
 Output:
@@ -72,8 +56,8 @@ class ESM2EmbeddingExtractor:
         self.model = self.model.to(self.device)
         self.model.eval()
 
-        print(f"✓ Model loaded on {self.device}")
-        print(f"  Embedding dimension: {self.model.embed_dim}")
+        print(f"Model loaded on {self.device}")
+        print(f"Embedding dimension: {self.model.embed_dim}")
 
     def extract_embeddings(self, df: pd.DataFrame, batch_size=8):
         """
@@ -82,7 +66,7 @@ class ESM2EmbeddingExtractor:
         sequences = df.to_dict("records")
         embeddings_list, labels_list, ids_list = [], [], []
 
-        print(f"\nExtracting embeddings for {len(sequences)} proteins...")
+        print(f"Extracting embeddings for {len(sequences)} proteins...")
 
         with torch.no_grad():
             for i in tqdm(range(0, len(sequences), batch_size)):
@@ -109,12 +93,12 @@ class ESM2EmbeddingExtractor:
 
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower():
-                        print(f"\n⚠️  OOM error! Try: --batch_size {batch_size // 2}")
+                        print(f"OOM error! Try: --batch_size {batch_size // 2}")
                         torch.cuda.empty_cache()
                         continue
                     raise e
 
-        print(f"\n✓ Extracted {len(embeddings_list)} embedding matrices.")
+        print(f"Extracted {len(embeddings_list)} embedding matrices.")
         return embeddings_list, torch.tensor(labels_list), ids_list
 
 
@@ -144,7 +128,7 @@ def main():
     print("=" * 70)
 
     df = pd.read_csv(args.input)
-    print(f"✓ Loaded {len(df)} sequences from {args.input}")
+    print(f"Loaded {len(df)} sequences from {args.input}")
 
     extractor = ESM2EmbeddingExtractor(model_name=args.model)
     embeddings, labels, ids = extractor.extract_embeddings(df, args.batch_size)
@@ -157,7 +141,7 @@ def main():
     }
 
     torch.save(data, args.output)
-    print(f"\n✅ Saved embeddings to {args.output}")
+    print(f"Saved embeddings to {args.output}")
 
     print("\nStatistics:")
     print(f"  Total: {len(labels)}")
