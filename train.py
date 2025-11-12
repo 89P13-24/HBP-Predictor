@@ -204,7 +204,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     trainer = HemeTrainer(model, optimizer, criterion, device, patience=args.patience)
-    # trainer.train(train_loader, val_loader, args.epochs)
+    trainer.train(train_loader, val_loader, args.epochs)
     trainer.model.load_state_dict(torch.load("best_attention_model.pt"))
     trainer.test(test_loader)
 

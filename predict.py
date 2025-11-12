@@ -1,20 +1,3 @@
-"""
-Script: Predict Heme-Binding for New Proteins (Attention Version)
-=================================================================
-Makes predictions for new protein sequences using the trained
-AttentionHemeClassifier and ESM-2 embeddings.
-
-Usage:
-    # Single sequence
-    python predict_attention.py --sequence MKALIVLGL...
-
-    # From FASTA file
-    python predict_attention.py --fasta new_proteins.fasta
-
-    # Batch prediction
-    python predict_attention.py --fasta proteins.fasta --output predictions.csv
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,9 +6,6 @@ from typing import List, Tuple
 
 from train import AttentionHemeClassifier
 
-# --------------------------------------------------
-# PREDICTOR
-# --------------------------------------------------
 class HemePredictor:
     def __init__(self, model_path='best_attention_model.pt', esm_model='esm2_t33_650M_UR50D', max_len=512):
         print("Loading models...")
@@ -126,21 +106,26 @@ class HemePredictor:
 # FASTA + SAVE
 # --------------------------------------------------
 def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
-    seqs = []
+    """Read sequences from FASTA file"""
+    sequences = []
     with open(fasta_file, 'r') as f:
-        curr_id, curr_seq = None, []
+        current_id = None
+        current_seq = []
+        
         for line in f:
             line = line.strip()
-            if line.startswith(">"):
-                if curr_id:
-                    seqs.append((curr_id, ''.join(curr_seq)))
-                curr_id = line[1:].split()[0]
-                curr_seq = []
+            if line.startswith('>'):
+                if current_id:
+                    sequences.append((current_id, ''.join(current_seq)))
+                current_id = line[1:].split()[0]  # Get first part of header
+                current_seq = []
             else:
-                curr_seq.append(line)
-        if curr_id:
-            seqs.append((curr_id, ''.join(curr_seq)))
-    return seqs
+                current_seq.append(line)
+        
+        if current_id:
+            sequences.append((current_id, ''.join(current_seq)))
+    
+    return sequences
 
 
 def save_predictions(results: List[dict], output_file: str):
@@ -177,11 +162,12 @@ def main():
     if args.sequence:
         label, conf = predictor.predict_single(args.sequence)
         print(f"\nPrediction: {label} (confidence={conf:.4f})")
+    elif args.fasta:
+            seqs = read_fasta(args.fasta)
+            results = predictor.predict_batch(seqs)
+            save_predictions(results, args.output)
     else:
-        seqs = read_fasta(args.fasta)
-        results = predictor.predict_batch(seqs)
-        save_predictions(results, args.output)
-
+        parser.error("Provide either --sequence or --fasta")
 
 if __name__ == "__main__":
     main()
