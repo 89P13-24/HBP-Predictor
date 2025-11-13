@@ -147,7 +147,7 @@ def main():
     parser.add_argument('--fasta', type=str, default=None)
     parser.add_argument('--output', type=str, default='predictions.csv')
     parser.add_argument('--esm_model', type=str, default='esm2_t33_650M_UR50D')
-    parser.add_argument('--max_len', type=int, default=256)
+    parser.add_argument('--max_len', type=int, default=1000)
     args = parser.parse_args()
 
     if not args.sequence and not args.fasta:
