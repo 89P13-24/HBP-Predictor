@@ -51,7 +51,7 @@ def fetch_uniprot(query, max_sequences=2000, max_length=None):
 def main():
     parser = argparse.ArgumentParser(description="Fetch heme-binding and non-heme proteins from UniProt")
     parser.add_argument("--max_sequences", type=int, default=2000, help="Max sequences per query (default: 2000)")
-    parser.add_argument("--max_length", type=int, default=2000, help="Max sequence length (default: 500)")
+    parser.add_argument("--max_length", type=int, default=256, help="Max sequence length (default: 256)")
     parser.add_argument("--output", type=str, default="heme_dataset_uniprot.csv", help="Output CSV file")
     args = parser.parse_args()
 
@@ -78,7 +78,7 @@ def main():
         for acc, seq in negatives:
             writer.writerow([acc, seq, 0])
 
-    print(f"✅ Dataset saved as {output_file}")
+    print(f"Dataset saved as {output_file}")
 
 
 if __name__ == "__main__":

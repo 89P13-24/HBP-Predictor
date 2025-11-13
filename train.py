@@ -1,50 +1,64 @@
-"""
-Script 3: Train Heme-Binding Classifier
-========================================
-Trains attention-based classifier for heme-binding prediction.
-
-Installation:
-    pip install torch scikit-learn matplotlib
-
-Usage:
-    python train_model.py --epochs 50 --lr 0.0001
-    
-Output:
-    - best_heme_model.pt: Best model checkpoint
-    - training_history.pkl: Training history
-    - training_curves.png: Loss/accuracy plots
-"""
-
+import argparse
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, matthews_corrcoef
-import pickle
-import argparse
-from tqdm import tqdm
-import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report
+
+# -----------------------
+# Dataset + Collate
+# -----------------------
+class ProteinDataset(Dataset):
+    def __init__(self, embeddings, labels):
+        self.embeddings = embeddings
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        return self.embeddings[idx], self.labels[idx]
 
 
-# ============================================================================
-# MODEL
-# ============================================================================
+def collate_batch(batch, max_len=None):
+    """Pads/truncates variable-length [L, D] tensors and returns mask."""
+    embeddings, labels = zip(*batch)
+    dim = embeddings[0].shape[1]
 
+    # Clip sequence length if specified
+    if max_len is None:
+        max_len = max(e.shape[0] for e in embeddings)
+    else:
+        max_len = min(max_len, max(e.shape[0] for e in embeddings))
+
+    padded = torch.zeros(len(embeddings), max_len, dim)
+    mask = torch.zeros(len(embeddings), max_len, dtype=torch.bool)
+
+    for i, e in enumerate(embeddings):
+        seq = e[:max_len]  # truncate if longer
+        L = seq.shape[0]
+        padded[i, :L] = seq
+        mask[i, :L] = 1
+
+    return padded, torch.tensor(labels), mask
+
+
+# -----------------------
+# Model
+# -----------------------
 class AttentionHemeClassifier(nn.Module):
-    """Attention-based classifier"""
-    
     def __init__(self, input_dim=1280, hidden_dim=512, num_heads=8, dropout=0.3):
         super().__init__()
-        
         self.attention = nn.MultiheadAttention(
             embed_dim=input_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
-        
+
+        self.attn_pool = nn.Linear(input_dim, 1)
+
         self.ffn = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -53,281 +67,161 @@ class AttentionHemeClassifier(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout)
         )
-        
         self.classifier = nn.Linear(hidden_dim // 2, 2)
         self.ln1 = nn.LayerNorm(input_dim)
         self.ln2 = nn.LayerNorm(hidden_dim // 2)
-    
-    def forward(self, x):
-        x = x.unsqueeze(1)
-        attn_out, attn_weights = self.attention(x, x, x)
+
+    def forward(self, x, mask):
+        """
+        x: [B, L, D]
+        mask: [B, L] (True = valid token)
+        """
+        attn_out, _ = self.attention(x, x, x, key_padding_mask=~mask)
         x = self.ln1(x + attn_out)
-        x = x.squeeze(1)
-        x = self.ffn(x)
+
+        # Compute per-residue attention scores
+        attn_scores = self.attn_pool(x).squeeze(-1)  # [B, L]
+        attn_scores[~mask] = float('-inf')  # mask padding residues
+        attn_weights = torch.softmax(attn_scores, dim=1)  # [B, L]
+
+        # Weighted mean pooling
+        pooled = torch.sum(attn_weights.unsqueeze(-1) * x, dim=1)  # [B, D]
+
+        x = self.ffn(pooled)
         x = self.ln2(x)
         logits = self.classifier(x)
-        return logits, attn_weights
+
+        return logits, attn_weights  # return weights for interpretability
 
 
-class ProteinDataset(Dataset):
-    def __init__(self, embeddings, labels):
-        self.embeddings = embeddings
-        self.labels = labels
-    
-    def __len__(self):
-        return len(self.labels)
-    
-    def __getitem__(self, idx):
-        return self.embeddings[idx], self.labels[idx]
-
-
-# ============================================================================
-# TRAINER
-# ============================================================================
-
-class HemePredictor:
-    def __init__(self, model, device='mps' if torch.backends.mps.is_available() else 'cpu'):
-        self.model = model.to(device)
+# -----------------------
+# Trainer
+# -----------------------
+class HemeTrainer:
+    def __init__(self, model, optimizer, criterion, device, patience=5):
+        self.model = model
+        self.optimizer = optimizer
+        self.criterion = criterion
         self.device = device
-        self.history = {
-            'train_loss': [], 'val_loss': [],
-            'val_acc': [], 'val_auc': []
-        }
-    
-    def train_epoch(self, loader, optimizer, criterion):
-        self.model.train()
-        total_loss = 0
-        
-        for embeddings, labels in tqdm(loader, desc="Training"):
-            embeddings = embeddings.to(self.device)
-            labels = labels.to(self.device)
-            
-            optimizer.zero_grad()
-            logits, _ = self.model(embeddings)
-            loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
-            
-            total_loss += loss.item()
-        
-        return total_loss / len(loader)
-    
-    def validate(self, loader, criterion):
-        self.model.eval()
-        total_loss = 0
-        all_preds, all_probs, all_labels = [], [], []
-        
-        with torch.no_grad():
-            for embeddings, labels in tqdm(loader, desc="Validating"):
-                embeddings = embeddings.to(self.device)
-                labels = labels.to(self.device)
-                
-                logits, _ = self.model(embeddings)
-                loss = criterion(logits, labels)
-                
-                probs = F.softmax(logits, dim=1)
-                preds = torch.argmax(logits, dim=1)
-                
-                total_loss += loss.item()
-                all_preds.extend(preds.cpu().numpy())
-                all_probs.extend(probs[:, 1].cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
-        
-        acc = np.mean(np.array(all_preds) == np.array(all_labels))
-        auc = roc_auc_score(all_labels, all_probs)
-        
-        return total_loss / len(loader), acc, auc, all_preds, all_probs, all_labels
-    
-    def fit(self, train_loader, val_loader, epochs=50, lr=1e-4, patience=10):
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.01)
-        criterion = nn.CrossEntropyLoss()
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=5
-        )
-        
-        best_auc = 0
+        self.patience = patience
+
+    def train(self, train_loader, val_loader, epochs):
+        best_val_loss = float("inf")
         patience_counter = 0
-        
-        print("\n" + "="*70)
-        print("TRAINING")
-        print("="*70)
-        
+
         for epoch in range(epochs):
-            print(f"\nEpoch {epoch+1}/{epochs}")
-            
-            train_loss = self.train_epoch(train_loader, optimizer, criterion)
-            val_loss, val_acc, val_auc, _, _, _ = self.validate(val_loader, criterion)
-            
-            self.history['train_loss'].append(train_loss)
-            self.history['val_loss'].append(val_loss)
-            self.history['val_acc'].append(val_acc)
-            self.history['val_auc'].append(val_auc)
-            
-            scheduler.step(val_auc)
-            
-            print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-            print(f"Val Acc: {val_acc:.4f} | Val AUC: {val_auc:.4f}")
-            
-            if val_auc > best_auc:
-                best_auc = val_auc
+            self.model.train()
+            total_loss = 0
+
+            for embeddings, labels, mask in train_loader:
+                embeddings, labels, mask = embeddings.to(self.device), labels.to(self.device), mask.to(self.device)
+                self.optimizer.zero_grad()
+
+                logits, _ = self.model(embeddings, mask)
+                loss = self.criterion(logits, labels.long())
+                loss.backward()
+                self.optimizer.step()
+                total_loss += loss.item()
+
+            avg_loss = total_loss / len(train_loader)
+            val_loss = self.validate(val_loader)
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}")
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 patience_counter = 0
-                torch.save({
-                    'model_state_dict': self.model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'best_auc': best_auc,
-                    'epoch': epoch
-                }, 'best_heme_model.pt')
-                print(f"✓ Best model saved (AUC: {best_auc:.4f})")
+                torch.save(self.model.state_dict(), "best_attention_model.pt")
             else:
                 patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"\nEarly stopping at epoch {epoch+1}")
-                    break
-        
-        checkpoint = torch.load('best_heme_model.pt')
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"\n✓ Training complete. Best AUC: {best_auc:.4f}")
-    
-    def evaluate(self, test_loader):
-        criterion = nn.CrossEntropyLoss()
-        test_loss, test_acc, test_auc, preds, probs, labels = \
-            self.validate(test_loader, criterion)
-        
-        print("\n" + "="*70)
-        print("TEST SET EVALUATION")
-        print("="*70)
-        print(f"Accuracy: {test_acc:.4f}")
-        print(f"AUC-ROC:  {test_auc:.4f}")
-        print(f"MCC:      {matthews_corrcoef(labels, preds):.4f}")
-        
-        print("\n" + classification_report(
-            labels, preds,
-            target_names=['Non-Heme', 'Heme-Binding'],
-            digits=4
-        ))
-        
-        cm = confusion_matrix(labels, preds)
-        print("Confusion Matrix:")
-        print(f"              Predicted")
-        print(f"            Non   Heme")
-        print(f"Actual Non  {cm[0,0]:4d}  {cm[0,1]:4d}")
-        print(f"       Heme {cm[1,0]:4d}  {cm[1,1]:4d}")
-        
-        return {
-            'accuracy': test_acc,
-            'auc': test_auc,
-            'mcc': matthews_corrcoef(labels, preds),
-            'confusion_matrix': cm
-        }
+
+            if patience_counter >= self.patience:
+                print("Early stopping.")
+                break
+
+    def validate(self, val_loader):
+        self.model.eval()
+        total_loss = 0
+        with torch.no_grad():
+            for embeddings, labels, mask in val_loader:
+                embeddings, labels, mask = embeddings.to(self.device), labels.to(self.device), mask.to(self.device)
+                logits, _ = self.model(embeddings, mask)
+                loss = self.criterion(logits, labels.long())
+                total_loss += loss.item()
+        return total_loss / len(val_loader)
+
+    def test(self, test_loader):
+        self.model.eval()
+        all_preds, all_labels = [], []
+        with torch.no_grad():
+            for embeddings, labels, mask in test_loader:
+                embeddings, labels, mask = embeddings.to(self.device), labels.to(self.device), mask.to(self.device)
+                logits, _ = self.model(embeddings, mask)
+                preds = torch.argmax(logits, dim=1)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+
+        print("\nClassification Report:")
+        print(classification_report(all_labels, all_preds, digits=4))
 
 
-# ============================================================================
-# VISUALIZATION
-# ============================================================================
+# -----------------------
+# Main
+# -----------------------
+def main(args):
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print("Using device:", device)
 
-def plot_training(history):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-    
-    # Loss
-    ax1.plot(history['train_loss'], label='Train', linewidth=2)
-    ax1.plot(history['val_loss'], label='Val', linewidth=2)
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.set_title('Training & Validation Loss')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    # Metrics
-    ax2.plot(history['val_acc'], label='Accuracy', linewidth=2)
-    ax2.plot(history['val_auc'], label='AUC', linewidth=2)
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Score')
-    ax2.set_title('Validation Metrics')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig('training_curves.png', dpi=300, bbox_inches='tight')
-    print("✓ Saved training_curves.png")
+    data = torch.load(args.data_path)
+    embeddings = data["embeddings"]  # list of [L, D] tensors
+    labels = np.array(data["labels"])
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
-
-def main():
-    parser = argparse.ArgumentParser(description='Train heme-binding classifier')
-    parser.add_argument('--input', type=str, default='protein_embeddings.pt')
-    parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--hidden_dim', type=int, default=512)
-    parser.add_argument('--patience', type=int, default=10)
-    
-    args = parser.parse_args()
-    
-    print("="*70)
-    print("HEME-BINDING CLASSIFIER TRAINING")
-    print("="*70)
-    
-    # Load data
-    data = torch.load(args.input)
-    embeddings = data['embeddings']
-    labels = data['labels']
-    
-    print(f"Loaded {len(labels)} samples")
-    print(f"Embedding dim: {embeddings.shape[1]}")
-    
     # Split data
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        embeddings, labels, test_size=0.2, stratify=labels, random_state=42
+    X_train, X_temp, y_train, y_temp = train_test_split(
+        embeddings, labels, test_size=0.3, random_state=42, stratify=labels
     )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=0.25, stratify=y_temp, random_state=42
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
     )
-    
-    print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
-    
-    # Create dataloaders
+
+    # Define collate function with max_len
+    collate_fn = lambda batch: collate_batch(batch, max_len=args.max_len)
+
     train_dataset = ProteinDataset(X_train, y_train)
     val_dataset = ProteinDataset(X_val, y_val)
     test_dataset = ProteinDataset(X_test, y_test)
-    
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
-    
-    # Build model
-    model = AttentionHemeClassifier(
-        input_dim=embeddings.shape[1],
-        hidden_dim=args.hidden_dim
-    )
-    
-    print(f"\nModel parameters: {sum(p.numel() for p in model.parameters()):,}")
-    
-    # Train
-    predictor = HemePredictor(model)
-    predictor.fit(train_loader, val_loader, epochs=args.epochs, lr=args.lr, patience=args.patience)
-    
-    # Evaluate
-    results = predictor.evaluate(test_loader)
-    
-    # Save
-    with open('training_history.pkl', 'wb') as f:
-        pickle.dump(predictor.history, f)
-    print("\n✓ Saved training_history.pkl")
-    
-    plot_training(predictor.history)
-    
-    print("\n" + "="*70)
-    print("TRAINING COMPLETE!")
-    print("="*70)
-    print("Outputs:")
-    print("  - best_heme_model.pt")
-    print("  - training_history.pkl")
-    print("  - training_curves.png")
-    print("\nNext: python predict.py --sequence YOURSEQUENCE")
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate_fn)
+
+    model = AttentionHemeClassifier(input_dim=args.embedding_dim).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    criterion = nn.CrossEntropyLoss()
+
+    trainer = HemeTrainer(model, optimizer, criterion, device, patience=args.patience)
+    trainer.train(train_loader, val_loader, args.epochs)
+    trainer.model.load_state_dict(torch.load("best_attention_model.pt"))
+    trainer.test(test_loader)
 
 
+# -----------------------
+# Entry Point
+# -----------------------
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="heme_embeddings.pt")
+    parser.add_argument("--embedding_dim", type=int, default=1280)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--max_len", type=int, default=512, help="Maximum sequence length for truncation/padding")
+
+    args = parser.parse_args()
+    main(args)
