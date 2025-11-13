@@ -118,8 +118,6 @@ Trains attention-based classifier.
 
 **Output:**
 - `best_heme_model.pt` - Best model checkpoint
-- `training_history.pkl` - Training metrics
-- `training_curves.png` - Visualization
 
 **Example:**
 ```bash
@@ -149,14 +147,6 @@ python predict.py --fasta new_proteins.fasta --output predictions.csv
 ```
 
 ## 📈 Performance
-
-### Expected Results
-
-| Dataset Size | Training Time | Test AUC | Test Accuracy | MCC |
-|-------------|---------------|----------|---------------|-----|
-| 300+300 | ~15 min | 0.85-0.90 | 80-85% | 0.60-0.70 |
-| 1000+1000 | ~45 min | 0.90-0.94 | 85-90% | 0.70-0.80 |
-| 5000+5000 | ~2 hours | 0.93-0.97 | 90-95% | 0.80-0.90 |
 
 ### Model Comparison
 
@@ -189,24 +179,6 @@ python train_model.py --hidden_dim 256
 ```
 
 
-# Run multiple times and combine data manually
-```
-
-### Low Performance
-If validation AUC < 0.80:
-- Collect more data
-- Train for more epochs
-- Use larger ESM-2 model
-- Check data quality (sequence lengths, label balance)
-
-### CPU-Only Systems
-The pipeline works on CPU but is slower:
-```bash
-# Use smaller model and batch size
-python extract_embeddings.py --model esm2_t12_35M_UR50D --batch_size 1
-python train_model.py --batch_size 8 --epochs 30
-```
-
 ## 📁 Output Files
 
 After running the complete pipeline, you'll have:
@@ -217,7 +189,6 @@ project/
 ├── extract_embeddings.py
 ├── train_model.py
 ├── predict.py
-├── protein_sequences.pkl          # Raw sequences
 ├── sequences.fasta                 # FASTA format
 ├── protein_embeddings.pt           # ESM-2 embeddings
 ├── best_heme_model.pt             # Trained model
@@ -225,18 +196,6 @@ project/
 ├── training_curves.png            # Visualization
 └── predictions.csv                # Results
 ```
-
-## 🔬 Understanding the Results
-
-### Prediction Confidence
-- **>0.90**: High confidence
-- **0.70-0.90**: Medium confidence
-- **<0.70**: Low confidence (manual verification recommended)
-
-### Interpreting Metrics
-- **AUC-ROC**: Overall discrimination ability (higher is better)
-- **Accuracy**: Percentage of correct predictions
-- **MCC**: Matthews Correlation Coefficient (-1 to 1, accounts for class imbalance)
 
 ### Example Output
 ```
